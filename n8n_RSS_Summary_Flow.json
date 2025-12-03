@@ -1,0 +1,210 @@
+{
+  "name": "Gigazine　要約 3h",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 3
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "f56e051c-e801-4433-967e-1285e40cdd22",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "https://gigazine.net/news/rss_2.0/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        192,
+        0
+      ],
+      "id": "858c57fe-2490-420c-9eb8-b200f34d23fe",
+      "name": "RSS Read"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "86c5a904-1690-4c14-b3c4-5fc42109ea48",
+              "leftValue": "={{ $json[\"isoDate\"] }}",
+              "rightValue": "= {{ $now.minus({hours:3}) }}",
+              "operator": {
+                "type": "dateTime",
+                "operation": "after"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        432,
+        0
+      ],
+      "id": "d7b32667-fe8b-4981-92be-2e36becdbcb1",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.0-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.0-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=以下の記事を7行程度で日本語要約してください。\n\nタイトル: {{ $json[\"title\"] }}\n本文: {{ $json[\"content\"] || $json[\"description\"] }}\nURL: {{ $json[\"link\"] }}\n\n出力は必ず以下のJSON形式で返してください：\n{\n  \"title\": \"{{ $json[\"title\"] }}\",\n  \"link\": \"{{ $json[\"link\"] }}\",\n  \"summary\": \"要約テキスト\"\n}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        688,
+        16
+      ],
+      "id": "5a33aa0e-9ce1-41d3-b6cc-30c78b623dbc",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "KYFFN59uqEOYRJoH",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ========== JST時刻フォーマッタ ==========\nfunction formatJST(date = new Date()) {\n  const fmt = new Intl.DateTimeFormat('ja-JP', {\n    timeZone: 'Asia/Tokyo',\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: false,\n  });\n  const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));\n  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;\n}\n\n// 件名（JST）\nconst subject = `RSSまとめ ${formatJST()}`;\n\n// ========== 本文（あなたの既存ロジック） ==========\nconst items = $input.all();\nconst compiled = [];\n\nfor (const item of items) {\n  const j = item.json ?? item;\n\n  // ① すでに JSON で来ている（Output Content as JSON = ON）\n  if (j.title && j.link && j.summary) {\n    compiled.push(`<a href=\"${j.link}\">${j.title}</a><br>${j.summary}<br><br>`);\n    continue;\n  }\n\n  // ② モデルのテキストから取り出す (content → parts)\n  let text =\n    j.content?.parts?.[0]?.text ??\n    j.content?.parts?.[\"parts[0]\"]?.text ?? // 変なキー名ケース\n    j.content?.text ??\n    j.text ?? \"\";\n\n  if (!text) {\n    compiled.push(\"⚠️ モデルのテキストが見つかりませんでした\");\n    continue;\n  }\n\n  // コードフェンス除去\n  const cleaned = text.replace(/```json|```/g, \"\").trim();\n\n  // ③ JSONとしてパース（失敗したら簡易抽出）\n  let obj;\n  try {\n    obj = JSON.parse(cleaned);\n  } catch {\n    const title = /\"title\"\\s*:\\s*\"([^\"]+)\"/.exec(cleaned)?.[1] ?? \"(タイトルなし)\";\n    const link = /\"link\"\\s*:\\s*\"([^\"]+)\"/.exec(cleaned)?.[1] ?? \"#\";\n    const summary = /\"summary\"\\s*:\\s*\"([^\"]+)\"/.exec(cleaned)?.[1] ?? cleaned;\n    obj = { title, link, summary };\n  }\n\n  compiled.push(`<a href=\"${obj.link}\">${obj.title}</a><br>${obj.summary}<br><br>`);\n}\n\nreturn [\n  {\n    json: {\n      subject,                         // ← ここをGmailノードの件名で使う\n      compiled: compiled.join(\"\\n\\n\"), // ← 本文（HTML）\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        0
+      ],
+      "id": "552951a8-6747-4968-9f6e-40408379a8eb",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "sendTo": "r01fr001mkiii@gmail.com",
+        "subject": "=Gigazine　{{$json.subject}}",
+        "message": "={{ $json.compiled }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1312,
+        0
+      ],
+      "id": "4d084597-0c8d-49f1-b971-444c7e267c12",
+      "name": "Send a message1",
+      "webhookId": "7296be26-13e6-4989-a8df-ee2e028ee886",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "oZMhNHwUR6tsy9BS",
+          "name": "Gmail account 4"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "RSS Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Read": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "27cbff13-4455-49ea-894c-323067a2f5cf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "08c363e6e16fd2742c089bd08f404fbe31efbc650b3b945fda2d4c0c6a1de957"
+  },
+  "id": "wnqHkD2RppxbY4DX",
+  "tags": []
+}
